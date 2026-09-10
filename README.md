@@ -53,19 +53,25 @@ export GROQ_API_KEY="gsk_..."
 Run the router from the CLI. The first argument is your model fallback chain, and the rest is your prompt.
 
 ```bash
-python smart_router.py "<provider:model1>,<provider:model2>" "<your prompt>"
+python smart_router.py -m "<provider:model1>,<provider:model2>" -p "<your prompt>"
+```
+
+You can also read prompts from a file or via standard input:
+```bash
+python smart_router.py -m "nvidia:nemotron,groq:llama3" -f prompt.txt
+cat logs.txt | python smart_router.py -m "groq:llama3"
 ```
 
 ### Examples
 
 **Heavy Coding Task (Nvidia Laguna -> Groq Fallback):**
 ```bash
-python smart_router.py "nvidia:poolside/laguna-xs-2.1,groq:groq/compound" "Write a python script to parse logs."
+python smart_router.py -m "nvidia:poolside/laguna-xs-2.1,groq:groq/compound" -p "Write a python script to parse logs."
 ```
 
-**Complex Reasoning (Nemotron -> Kimi):**
+**Custom Cooldown and Project ID:**
 ```bash
-python smart_router.py "nvidia:nvidia/nemotron-3-super-120b-a12b,nvidia:moonshotai/kimi-k3" "Solve this logic puzzle..."
+python smart_router.py -m "groq:llama3" -p "Hello" --project "agent-core" --max-failures 3 --cooldown 300
 ```
 
 ## 🏗️ Architecture Overview

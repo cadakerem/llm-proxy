@@ -10,8 +10,9 @@ When you need to perform heavy coding, architecture design, logic reasoning, or 
 ## Usage
 
 ```bash
-python /path/to/smart_router.py "<provider:model1,provider:model2>" "<your_prompt>"
+python /path/to/smart_router.py -m "<provider:model1,provider:model2>" -p "<your_prompt>"
 ```
+You can also read from a file using `-f file.txt` or pipe content via standard input.
 *Note: Always provide at least two models separated by a comma for automatic fallback.*
 
 ## Supported Providers
