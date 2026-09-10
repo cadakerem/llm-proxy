@@ -1,4 +1,2 @@
-fastapi
-uvicorn
-httpx
-python-dotenv
+﻿openai>=1.0.0
+filelock>=3.12.0

@@ -1,61 +1,69 @@
-# LLM Proxy (API Translation Layer)
+﻿# Smart Router (CLI Delegation Tool)
 
-A translation layer that converts Anthropic's `Messages API` format into standard `OpenAI Chat Completions` format on the fly.
+> A lightweight, fault-tolerant CLI tool for delegating LLM tasks to expert models across multiple providers (Nvidia NIM, Groq, OpenAI).
 
-This allows developers to seamlessly use **Antigravity** or **Claude Code** with alternative local or remote models (like OpenAI, Nvidia NIM, Groq, or Ollama) with full agentic capabilities.
+![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
+![License](https://img.shields.io/badge/License-MIT-green)
 
 ## ⚡ Features
-- **Full SSE Streaming:** Real-time token-by-token output. Prevents timeouts and preserves the native CLI UI experience.
-- **Two-Way Tool Calling:** Translates Anthropic's JSON Schema tools into OpenAI functions, and maps OpenAI's `tool_calls` back to Anthropic `tool_use` blocks. (Agents can read files, run bash, etc.)
-- **Fallback Chains:** You can configure ordered fallback lists for resilience if a provider API fails.
-- **Concurrent Support:** Built on an asynchronous (FastAPI + HTTPX) architecture, handling multiple parallel agent requests without blocking the terminal.
-- **100% Transparent:** The entire core translation logic is just a single file (`src/main.py`).
 
-## Technical Realities
-- **TOS Gray Area:** While using `ANTHROPIC_BASE_URL` is an officially supported mechanism for enterprise gateways, explicitly using it to bypass Anthropic's ecosystem and proxy to third-party models is an undefined gray area in their Terms of Service. Use for educational and testing purposes.
-- **Fallback Mid-Stream:** The current fallback mechanism only works if the initial HTTP request fails. If a provider fails mid-stream (which is common), silent fallbacks are architecturally impossible without resetting the client UI.
+- **Multi-Provider Support:** Seamlessly route requests to `nvidia`, `groq`, or `openai`.
+- **Automatic Fallbacks:** Provide a comma-separated list of models. If one fails, it instantly falls back to the next.
+- **Circuit Breaker:** Built-in health tracking and cooldowns to prevent spamming dead endpoints.
+- **Reasoning Extraction:** Automatically extracts and formats hidden `<thought>` or `reasoning` blocks (e.g., from Nemotron or DeepSeek).
+- **Streaming Native:** Built on the official OpenAI SDK for fast and reliable streaming chunks.
 
-## Security Note (Network Binding)
-By default, the FastAPI server binds strictly to `127.0.0.1` (localhost). **Do not change this to `0.0.0.0`.** If you do, anyone on your local network (e.g., public WiFi, office LAN) can discover the proxy and route requests through your API keys.
-
-## Installation as an Antigravity SKILL
-
-If you want to use this project as a **SKILL** in Antigravity or similar AI assistants, you can clone the repository directly into your skills directory.
-
-**Global installation (applies to all projects):**
-```bash
-git clone https://github.com/cadakerem/llm-proxy.git ~/.gemini/config/skills/llm-proxy
-```
-
-**Project-specific installation:**
-```bash
-mkdir -p .agents/skills
-git clone https://github.com/cadakerem/llm-proxy.git .agents/skills/llm-proxy
-```
-
-## Standard Installation (Standalone)
+## 📦 Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/cadakerem/llm-proxy.git
-cd llm-proxy
+git clone https://github.com/cadakerem/llm-proxy.git smart-router
+cd smart-router
 
-# Install requirements
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-## 💻 Usage
-**Configure and Run:**
-```bash
-# Rename the example env file and add your keys
-mv .env.example .env
+### Setup API Keys
+The router checks for a `keys.json` file in the same directory, or falls back to system environment variables.
 
-# Start the proxy and the CLI
-python start.py
+**Option 1: keys.json**
+Create a `keys.json` file in the root directory:
+```json
+{
+  "NVIDIA_API_KEY": "nvapi-...",
+  "GROQ_API_KEY": "gsk_...",
+  "OPENAI_API_KEY": "sk-..."
+}
 ```
 
-## 🤝 Contributing
-Contributions are welcome.
+**Option 2: Environment Variables**
+```bash
+export NVIDIA_API_KEY="nvapi-..."
+export GROQ_API_KEY="gsk_..."
+```
 
-## 📜 License
-[MIT License](LICENSE)
+## 💻 Usage
+
+Run the router from the CLI. The first argument is your model fallback chain, and the rest is your prompt.
+
+```bash
+python smart_router.py "<provider:model1>,<provider:model2>" "<your prompt>"
+```
+
+### Examples
+
+**Heavy Coding Task (Nvidia Laguna -> Groq Fallback):**
+```bash
+python smart_router.py "nvidia:poolside/laguna-xs-2.1,groq:groq/compound" "Write a python script to parse logs."
+```
+
+**Complex Reasoning (Nemotron -> Kimi):**
+```bash
+python smart_router.py "nvidia:nvidia/nemotron-3-super-120b-a12b,nvidia:moonshotai/kimi-k3" "Solve this logic puzzle..."
+```
+
+## 🏗️ Architecture Overview
+
+The router uses a `FileLock`-backed JSON state (`circuit_breaker.json`) to track failures across concurrent runs. 
+If an endpoint times out or returns a 5xx error more than `MAX_FAILURES` times, the circuit trips and forces the router to skip that endpoint for the next 120 seconds, immediately trying the next fallback model.
