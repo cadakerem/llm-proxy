@@ -31,7 +31,7 @@ def get_api_key(provider):
                 env_name = f"{provider.upper()}_API_KEY"
                 if keys.get(env_name):
                     return keys[env_name]
-        except:
+        except Exception as e:
             pass
     return os.environ.get(f"{provider.upper()}_API_KEY")
 
@@ -55,7 +55,7 @@ def load_circuit():
             try:
                 with open(CIRCUIT_FILE, 'r') as f:
                     return json.load(f)
-            except:
+            except Exception as e:
                 time.sleep(random.uniform(0.01, 0.05))
     return {}
 

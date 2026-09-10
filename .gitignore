@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+keys.json
+circuit_breaker.json
+circuit_breaker.json.lock

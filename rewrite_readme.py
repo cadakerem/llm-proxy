@@ -1,4 +1,6 @@
-# Smart Router (CLI Delegation Tool)
+﻿import os
+
+readme_content = """# Smart Router (CLI Delegation Tool)
 
 > A lightweight, fault-tolerant CLI tool for delegating LLM tasks to expert models across multiple providers (Nvidia NIM, Groq, OpenAI, Anthropic Claude, Gemini).
 
@@ -72,3 +74,7 @@ python smart_router.py "nvidia:nvidia/nemotron-3-super-120b-a12b,nvidia:moonshot
 
 The router uses a `FileLock`-backed JSON state (`circuit_breaker.json`) to track failures across concurrent runs. 
 If an endpoint times out or returns a 5xx error more than `MAX_FAILURES` times, the circuit trips and forces the router to skip that endpoint for the next 120 seconds, immediately trying the next fallback model.
+"""
+
+with open("README.md", 'w', encoding='utf-8') as f:
+    f.write(readme_content)
