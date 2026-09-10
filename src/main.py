@@ -200,7 +200,7 @@ async def parse_openai_stream(response: httpx.Response) -> AsyncGenerator[str, N
             except json.JSONDecodeError:
                 pass
                 
-    yield f'event: message_delta\ndata: {{"type": "message_delta", "delta": {{"stop_reason": "{stop_reason_val}", "stop_sequence": null}}, "usage": {{"output_tokens": {final_usage["output_tokens"]}}}}}\n\n'
+    yield f'event: message_delta\ndata: {{"type": "message_delta", "delta": {{"stop_reason": "{stop_reason_val}", "stop_sequence": null}}, "usage": {{"output_tokens": {final_usage["output_tokens"]}, "input_tokens": {final_usage["input_tokens"]}}}}}\n\n'
     yield f'event: message_stop\ndata: {{"type": "message_stop"}}\n\n'
 
 def openai_to_anthropic_sync(openai_response: Dict[str, Any]) -> Dict[str, Any]:
@@ -255,7 +255,10 @@ async def health_check():
 
 @app.post("/v1/count_tokens")
 async def count_tokens(request: Request):
-    return {"input_tokens": 100}
+    body = await request.json()
+    # Lightweight heuristic: ~4 characters per token
+    estimated_tokens = len(str(body)) // 4
+    return {"input_tokens": max(estimated_tokens, 10)}
 
 @app.post("/v1/messages")
 async def create_message(request: Request):
