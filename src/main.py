@@ -80,6 +80,9 @@ def anthropic_to_openai_messages(anthropic_messages: List[Dict[str, Any]]) -> Li
                 elif not isinstance(result_content, str):
                     result_content = json.dumps(result_content)
                 
+                if is_error:
+                    result_content = f"Error: {result_content}"
+                
                 # Each tool_result becomes a separate "tool" message in OpenAI
                 openai_msgs.append({
                     "role": "tool",
@@ -108,6 +111,8 @@ def translate_payload(anthropic_payload: Dict[str, Any], target_model: str) -> D
         "max_tokens": min(anthropic_payload.get("max_tokens", 4096), 16000),
         "stream": anthropic_payload.get("stream", False)
     }
+    if payload["stream"]:
+        payload["stream_options"] = {"include_usage": True}
     if "system" in anthropic_payload and anthropic_payload["system"]:
         sys_msg = anthropic_payload["system"]
         if isinstance(sys_msg, list):
@@ -128,8 +133,9 @@ async def parse_openai_stream(response: httpx.Response) -> AsyncGenerator[str, N
     # 1. Start message
     yield f'event: message_start\ndata: {{"type": "message_start", "message": {{"id": "{msg_id}", "type": "message", "role": "assistant", "model": "claude-3-5-sonnet", "content": [], "stop_reason": null, "stop_sequence": null, "usage": {{"input_tokens": 0, "output_tokens": 0}}}}}}\n\n'
     
-    current_tool_index = -1
-    content_started = False
+    open_blocks = set()
+    stop_reason_val = "end_turn"
+    final_usage = {"input_tokens": 0, "output_tokens": 0}
     
     async for line in response.aiter_lines():
         line = line.strip()
@@ -138,6 +144,12 @@ async def parse_openai_stream(response: httpx.Response) -> AsyncGenerator[str, N
         if line.startswith("data: "):
             try:
                 data = json.loads(line[6:])
+                
+                # Check for usage info (if include_usage was set)
+                if "usage" in data and data["usage"]:
+                    final_usage["input_tokens"] = data["usage"].get("prompt_tokens", 0)
+                    final_usage["output_tokens"] = data["usage"].get("completion_tokens", 0)
+                
                 choices = data.get("choices", [])
                 if not choices:
                     continue
@@ -145,9 +157,9 @@ async def parse_openai_stream(response: httpx.Response) -> AsyncGenerator[str, N
                 
                 # Handling Text Content
                 if "content" in delta and delta["content"]:
-                    if not content_started:
+                    if 0 not in open_blocks:
                         yield f'event: content_block_start\ndata: {{"type": "content_block_start", "index": 0, "content_block": {{"type": "text", "text": ""}}}}\n\n'
-                        content_started = True
+                        open_blocks.add(0)
                     text = delta["content"]
                     yield f'event: content_block_delta\ndata: {{"type": "content_block_delta", "index": 0, "delta": {{"type": "text_delta", "text": {json.dumps(text)}}}}}\n\n'
                 
@@ -155,37 +167,40 @@ async def parse_openai_stream(response: httpx.Response) -> AsyncGenerator[str, N
                 if "tool_calls" in delta:
                     for tc in delta["tool_calls"]:
                         idx = tc.get("index", 0) + 1 # Offset by 1 in case text is block 0
+                        
                         if tc.get("id"): # New tool call start
-                            current_tool_index = idx
-                            # Close previous text block if open
-                            if content_started:
+                            # Close text block if open to keep things ordered
+                            if 0 in open_blocks:
                                 yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": 0}}\n\n'
-                                content_started = False
-                            
+                                open_blocks.remove(0)
+                                
                             fn_name = tc.get("function", {}).get("name", "")
-                            yield f'event: content_block_start\ndata: {{"type": "content_block_start", "index": {idx}, "content_block": {{"type": "tool_use", "id": "{tc["id"]}", "name": "{fn_name}", "input": {{}}}}}}\n\n'
+                            
+                            safe_id = json.dumps(tc.get("id"))
+                            safe_name = json.dumps(fn_name)
+                            
+                            yield f'event: content_block_start\ndata: {{"type": "content_block_start", "index": {idx}, "content_block": {{"type": "tool_use", "id": {safe_id}, "name": {safe_name}, "input": {{}}}}}}\n\n'
+                            open_blocks.add(idx)
                         
                         args = tc.get("function", {}).get("arguments", "")
                         if args:
-                            yield f'event: content_block_delta\ndata: {{"type": "content_block_delta", "index": {current_tool_index}, "delta": {{"type": "input_json_delta", "partial_json": {json.dumps(args)}}}}}\n\n'
+                            yield f'event: content_block_delta\ndata: {{"type": "content_block_delta", "index": {idx}, "delta": {{"type": "input_json_delta", "partial_json": {json.dumps(args)}}}}}\n\n'
                 
                 # Handling Stop / Finish
                 finish_reason = choices[0].get("finish_reason")
                 if finish_reason:
-                    if content_started:
-                        yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": 0}}\n\n'
-                    if current_tool_index != -1:
-                        yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {current_tool_index}}}\n\n'
+                    # Close all remaining open blocks
+                    for b_idx in list(open_blocks):
+                        yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {b_idx}}}\n\n'
+                        open_blocks.remove(b_idx)
                     
-                    stop_reason = "end_turn"
                     if finish_reason == "tool_calls":
-                        stop_reason = "tool_use"
-                        
-                    yield f'event: message_delta\ndata: {{"type": "message_delta", "delta": {{"stop_reason": "{stop_reason}", "stop_sequence": null}}, "usage": {{"output_tokens": 0}}}}\n\n'
-            
+                        stop_reason_val = "tool_use"
+                    
             except json.JSONDecodeError:
                 pass
                 
+    yield f'event: message_delta\ndata: {{"type": "message_delta", "delta": {{"stop_reason": "{stop_reason_val}", "stop_sequence": null}}, "usage": {{"output_tokens": {final_usage["output_tokens"]}}}}}\n\n'
     yield f'event: message_stop\ndata: {{"type": "message_stop"}}\n\n'
 
 def openai_to_anthropic_sync(openai_response: Dict[str, Any]) -> Dict[str, Any]:
