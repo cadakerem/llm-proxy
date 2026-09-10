@@ -1,8 +1,9 @@
 import os
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, AsyncGenerator
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import StreamingResponse
 import httpx
 from dotenv import load_dotenv
 from pathlib import Path
@@ -18,87 +19,210 @@ logging.basicConfig(
 )
 logger = logging.getLogger("claude-proxy")
 
-# Always load .env from the project root (parent of src/)
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
-
-# Debug: confirm keys loaded
-logger.info(f"GROQ_KEY loaded: {bool(os.environ.get('GROQ_API_KEY'))}")
-logger.info(f"NVIDIA_KEY loaded: {bool(os.environ.get('NVIDIA_API_KEY'))}")
-logger.info(f"TARGET_MODELS: {os.environ.get('TARGET_MODELS')}")
-
 
 app = FastAPI(title="Custom Claude CLI Proxy")
 
 PROVIDERS = {
-    "groq": {
-        "url": "https://api.groq.com/openai/v1/chat/completions",
-        "key": os.environ.get("GROQ_API_KEY")
-    },
-    "nvidia": {
-        "url": "https://integrate.api.nvidia.com/v1/chat/completions",
-        "key": os.environ.get("NVIDIA_API_KEY")
-    },
-    "openai": {
-        "url": "https://api.openai.com/v1/chat/completions",
-        "key": os.environ.get("OPENAI_API_KEY")
-    },
-    "gemini": {
-        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-        "key": os.environ.get("GEMINI_API_KEY")
-    },
-    "local": {
-        "url": "http://127.0.0.1:11434/v1/chat/completions",
-        "key": "dummy-key"
-    }
+    "groq": {"url": "https://api.groq.com/openai/v1/chat/completions", "key": os.environ.get("GROQ_API_KEY")},
+    "nvidia": {"url": "https://integrate.api.nvidia.com/v1/chat/completions", "key": os.environ.get("NVIDIA_API_KEY")},
+    "openai": {"url": "https://api.openai.com/v1/chat/completions", "key": os.environ.get("OPENAI_API_KEY")},
+    "gemini": {"url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "key": os.environ.get("GEMINI_API_KEY")},
+    "local": {"url": "http://127.0.0.1:11434/v1/chat/completions", "key": "dummy-key"}
 }
 
 TARGET_MODELS = [m.strip() for m in os.environ.get("TARGET_MODELS", "openai:gpt-4o").split(",") if m.strip()]
 
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    response = await call_next(request)
-    return response
+def anthropic_to_openai_tools(anthropic_tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not anthropic_tools:
+        return []
+    return [{
+        "type": "function",
+        "function": {
+            "name": t.get("name"),
+            "description": t.get("description", ""),
+            "parameters": t.get("input_schema", {})
+        }
+    } for t in anthropic_tools]
 
-def anthropic_to_openai(anthropic_payload: Dict[str, Any], target_model: str) -> Dict[str, Any]:
-    messages = []
-    
-    if "system" in anthropic_payload and anthropic_payload["system"]:
-        messages.append({"role": "system", "content": anthropic_payload["system"]})
+def anthropic_to_openai_messages(anthropic_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    openai_msgs = []
+    for msg in anthropic_messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", [])
         
-    for msg in anthropic_payload.get("messages", []):
-        content = ""
-        if isinstance(msg.get("content"), str):
-            content = msg["content"]
-        elif isinstance(msg.get("content"), list):
-            for block in msg["content"]:
-                if block.get("type") == "text":
-                    content += block.get("text", "")
-                    
-        messages.append({"role": msg.get("role", "user"), "content": content})
+        if isinstance(content, str):
+            openai_msgs.append({"role": role, "content": content})
+            continue
 
-    return {
+        text_parts = []
+        tool_calls = []
+        
+        for block in content:
+            b_type = block.get("type")
+            if b_type == "text":
+                text_parts.append(block.get("text", ""))
+            elif b_type == "tool_use":
+                tool_calls.append({
+                    "id": block.get("id"),
+                    "type": "function",
+                    "function": {
+                        "name": block.get("name"),
+                        "arguments": json.dumps(block.get("input", {}))
+                    }
+                })
+            elif b_type == "tool_result":
+                is_error = block.get("is_error", False)
+                result_content = block.get("content", "")
+                if isinstance(result_content, list):
+                    result_content = "".join([c.get("text", "") for c in result_content if c.get("type") == "text"])
+                elif not isinstance(result_content, str):
+                    result_content = json.dumps(result_content)
+                
+                # Each tool_result becomes a separate "tool" message in OpenAI
+                openai_msgs.append({
+                    "role": "tool",
+                    "tool_call_id": block.get("tool_use_id"),
+                    "content": result_content
+                })
+                
+        # If there were text parts or tool calls, append them as the main message
+        if text_parts or tool_calls:
+            main_msg = {"role": "assistant" if role == "assistant" else "user"}
+            if text_parts:
+                main_msg["content"] = "".join(text_parts)
+            if tool_calls:
+                main_msg["tool_calls"] = tool_calls
+            if not text_parts and tool_calls:
+                main_msg["content"] = None # Some APIs expect null when only tool_calls are present
+            openai_msgs.append(main_msg)
+            
+    return openai_msgs
+
+def translate_payload(anthropic_payload: Dict[str, Any], target_model: str) -> Dict[str, Any]:
+    payload = {
         "model": target_model,
-        "messages": messages,
+        "messages": anthropic_to_openai_messages(anthropic_payload.get("messages", [])),
         "temperature": anthropic_payload.get("temperature", 0.7),
-        "max_tokens": min(anthropic_payload.get("max_tokens", 4096), 16000)
+        "max_tokens": min(anthropic_payload.get("max_tokens", 4096), 16000),
+        "stream": anthropic_payload.get("stream", False)
     }
+    if "system" in anthropic_payload and anthropic_payload["system"]:
+        sys_msg = anthropic_payload["system"]
+        if isinstance(sys_msg, list):
+            sys_msg = "".join([s.get("text", "") for s in sys_msg if s.get("type") == "text"])
+        payload["messages"].insert(0, {"role": "system", "content": sys_msg})
+        
+    tools = anthropic_to_openai_tools(anthropic_payload.get("tools", []))
+    if tools:
+        payload["tools"] = tools
+        
+    return payload
 
-def openai_to_anthropic(openai_response: Dict[str, Any]) -> Dict[str, Any]:
+import uuid
+
+async def parse_openai_stream(response: httpx.Response) -> AsyncGenerator[str, None]:
+    msg_id = f"msg_{uuid.uuid4().hex}"
+    
+    # 1. Start message
+    yield f'event: message_start\ndata: {{"type": "message_start", "message": {{"id": "{msg_id}", "type": "message", "role": "assistant", "model": "claude-3-5-sonnet", "content": [], "stop_reason": null, "stop_sequence": null, "usage": {{"input_tokens": 0, "output_tokens": 0}}}}}}\n\n'
+    
+    current_tool_index = -1
+    content_started = False
+    
+    async for line in response.aiter_lines():
+        line = line.strip()
+        if not line or line == "data: [DONE]":
+            continue
+        if line.startswith("data: "):
+            try:
+                data = json.loads(line[6:])
+                choices = data.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                
+                # Handling Text Content
+                if "content" in delta and delta["content"]:
+                    if not content_started:
+                        yield f'event: content_block_start\ndata: {{"type": "content_block_start", "index": 0, "content_block": {{"type": "text", "text": ""}}}}\n\n'
+                        content_started = True
+                    text = delta["content"]
+                    yield f'event: content_block_delta\ndata: {{"type": "content_block_delta", "index": 0, "delta": {{"type": "text_delta", "text": {json.dumps(text)}}}}}\n\n'
+                
+                # Handling Tool Calls
+                if "tool_calls" in delta:
+                    for tc in delta["tool_calls"]:
+                        idx = tc.get("index", 0) + 1 # Offset by 1 in case text is block 0
+                        if tc.get("id"): # New tool call start
+                            current_tool_index = idx
+                            # Close previous text block if open
+                            if content_started:
+                                yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": 0}}\n\n'
+                                content_started = False
+                            
+                            fn_name = tc.get("function", {}).get("name", "")
+                            yield f'event: content_block_start\ndata: {{"type": "content_block_start", "index": {idx}, "content_block": {{"type": "tool_use", "id": "{tc["id"]}", "name": "{fn_name}", "input": {{}}}}}}\n\n'
+                        
+                        args = tc.get("function", {}).get("arguments", "")
+                        if args:
+                            yield f'event: content_block_delta\ndata: {{"type": "content_block_delta", "index": {current_tool_index}, "delta": {{"type": "input_json_delta", "partial_json": {json.dumps(args)}}}}}\n\n'
+                
+                # Handling Stop / Finish
+                finish_reason = choices[0].get("finish_reason")
+                if finish_reason:
+                    if content_started:
+                        yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": 0}}\n\n'
+                    if current_tool_index != -1:
+                        yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {current_tool_index}}}\n\n'
+                    
+                    stop_reason = "end_turn"
+                    if finish_reason == "tool_calls":
+                        stop_reason = "tool_use"
+                        
+                    yield f'event: message_delta\ndata: {{"type": "message_delta", "delta": {{"stop_reason": "{stop_reason}", "stop_sequence": null}}, "usage": {{"output_tokens": 0}}}}\n\n'
+            
+            except json.JSONDecodeError:
+                pass
+                
+    yield f'event: message_stop\ndata: {{"type": "message_stop"}}\n\n'
+
+def openai_to_anthropic_sync(openai_response: Dict[str, Any]) -> Dict[str, Any]:
     choices = openai_response.get("choices", [])
     if not choices:
         return {}
-        
     choice = choices[0]
-    message_content = choice.get("message", {}).get("content", "")
+    msg = choice.get("message", {})
     
+    content_blocks = []
+    if msg.get("content"):
+        content_blocks.append({"type": "text", "text": msg.get("content")})
+        
+    for tc in msg.get("tool_calls", []):
+        try:
+            args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+        except:
+            args = {}
+        content_blocks.append({
+            "type": "tool_use",
+            "id": tc.get("id"),
+            "name": tc.get("function", {}).get("name"),
+            "input": args
+        })
+        
+    finish_reason = choice.get("finish_reason")
+    stop_reason = "end_turn"
+    if finish_reason == "tool_calls":
+        stop_reason = "tool_use"
+        
     return {
-        "id": openai_response.get("id", "msg_mock"),
+        "id": openai_response.get("id", f"msg_{uuid.uuid4().hex}"),
         "type": "message",
         "role": "assistant",
-        "model": "claude-3-5-sonnet-20240620", 
-        "content": [{"type": "text", "text": message_content}],
-        "stop_reason": "end_turn" if choice.get("finish_reason") == "stop" else choice.get("finish_reason"),
+        "model": "claude-3-5-sonnet", 
+        "content": content_blocks,
+        "stop_reason": stop_reason,
         "stop_sequence": None,
         "usage": {
             "input_tokens": openai_response.get("usage", {}).get("prompt_tokens", 0),
@@ -106,14 +230,16 @@ def openai_to_anthropic(openai_response: Dict[str, Any]) -> Dict[str, Any]:
         }
     }
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    return await call_next(request)
+
 @app.api_route("/api/hello", methods=["GET", "HEAD", "POST"])
 async def health_check():
     return {"status": "ok"}
 
 @app.post("/v1/count_tokens")
 async def count_tokens(request: Request):
-    body = await request.json()
-    # Return a fake token count so Claude CLI doesn't block
     return {"input_tokens": 100}
 
 @app.post("/v1/messages")
@@ -133,12 +259,10 @@ async def create_message(request: Request):
             provider_name, model_name = "openai", model_str
             
         provider = PROVIDERS.get(provider_name.strip().lower())
-        
         if not provider or not provider.get("key"):
-            logger.warning(f"Provider {provider_name} missing key. Skipping...")
             continue
             
-        openai_payload = anthropic_to_openai(body, model_name.strip())
+        openai_payload = translate_payload(body, model_name.strip())
         headers = {
             "Authorization": f"Bearer {provider['key']}",
             "Content-Type": "application/json"
@@ -147,46 +271,38 @@ async def create_message(request: Request):
         logger.info(f"Routing task to -> [{provider_name.upper()}] {model_name}")
         
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    provider["url"],
-                    json=openai_payload,
-                    headers=headers,
-                    timeout=90.0
-                )
+            client = httpx.AsyncClient()
+            if openai_payload.get("stream"):
+                # Handle SSE Stream
+                req = client.build_request("POST", provider["url"], json=openai_payload, headers=headers, timeout=90.0)
+                response = await client.send(req, stream=True)
                 response.raise_for_status()
-                target_data = response.json()
                 
-            logger.info(f"Success! Response received from {provider_name.upper()}")
-            
-            anthropic_resp = openai_to_anthropic(target_data)
-            
-            if body.get("stream", False):
-                from fastapi.responses import StreamingResponse
-                
-                async def fake_stream():
-                    yield f'event: message_start\ndata: {{"type": "message_start", "message": {{"id": "{anthropic_resp.get("id")}", "type": "message", "role": "assistant", "model": "{anthropic_resp.get("model")}", "content": [], "stop_reason": null, "stop_sequence": null, "usage": {json.dumps(anthropic_resp.get("usage", {}))}}}}}\n\n'
-                    yield f'event: content_block_start\ndata: {{"type": "content_block_start", "index": 0, "content_block": {{"type": "text", "text": ""}}}}\n\n'
-                    
-                    text_content = anthropic_resp.get("content", [{}])[0].get("text", "")
-                    
-                    # Yield the text delta in a single fast chunk
-                    yield f'event: content_block_delta\ndata: {{"type": "content_block_delta", "index": 0, "delta": {{"type": "text_delta", "text": {json.dumps(text_content)}}}}}\n\n'
-                    
-                    yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": 0}}\n\n'
-                    
-                    yield f'event: message_delta\ndata: {{"type": "message_delta", "delta": {{"stop_reason": "end_turn", "stop_sequence": null}}, "usage": {{"output_tokens": {anthropic_resp.get("usage", {}).get("output_tokens", 0)}}}}}\n\n'
-                    yield f'event: message_stop\ndata: {{"type": "message_stop"}}\n\n'
-                
-                return StreamingResponse(fake_stream(), media_type="text/event-stream")
+                async def stream_and_close():
+                    try:
+                        async for chunk in parse_openai_stream(response):
+                            yield chunk
+                    finally:
+                        await response.aclose()
+                        await client.aclose()
+                        
+                return StreamingResponse(stream_and_close(), media_type="text/event-stream")
             else:
-                return anthropic_resp
+                # Handle Sync
+                response = await client.post(provider["url"], json=openai_payload, headers=headers, timeout=90.0)
+                response.raise_for_status()
+                await client.aclose()
+                return openai_to_anthropic_sync(response.json())
             
         except Exception as e:
             error_body = ""
             if hasattr(e, 'response') and e.response is not None:
-                error_body = e.response.text[:500]
-            logger.error(f"Failed via {provider_name.upper()} ({model_name}): {str(e)} | Response: {error_body}")
+                try:
+                    await e.response.aread()
+                    error_body = e.response.text[:500]
+                except:
+                    pass
+            logger.error(f"Failed via {provider_name.upper()} ({model_name}): {str(e)} | {error_body}")
             continue
             
     logger.error("CRITICAL: All configured models exhausted.")
