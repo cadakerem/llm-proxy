@@ -1,19 +1,19 @@
-﻿# Smart Router (CLI Delegation Tool)
+# Smart Router (CLI Delegation Tool)
 
-> A lightweight, fault-tolerant CLI tool for delegating LLM tasks to expert models across multiple providers (Nvidia NIM, Groq, OpenAI).
+> A lightweight, fault-tolerant CLI tool for delegating LLM tasks to expert models across multiple providers (Nvidia NIM, Groq, OpenAI, Anthropic Claude, Gemini).
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-## ⚡ Features
+## ? Features
 
-- **Multi-Provider Support:** Seamlessly route requests to `nvidia`, `groq`, or `openai`.
+- **Multi-Provider Support:** seamlessly route requests to `nvidia`, `groq`, `openai`, `anthropic`, or `gemini`.
 - **Automatic Fallbacks:** Provide a comma-separated list of models. If one fails, it instantly falls back to the next.
 - **Circuit Breaker:** Built-in health tracking and cooldowns to prevent spamming dead endpoints.
 - **Reasoning Extraction:** Automatically extracts and formats hidden `<thought>` or `reasoning` blocks (e.g., from Nemotron or DeepSeek).
 - **Streaming Native:** Built on the official OpenAI SDK for fast and reliable streaming chunks.
 
-## 📦 Installation
+## ?? Installation
 
 ```bash
 # Clone the repository
@@ -33,7 +33,9 @@ Create a `keys.json` file in the root directory:
 {
   "NVIDIA_API_KEY": "nvapi-...",
   "GROQ_API_KEY": "gsk_...",
-  "OPENAI_API_KEY": "sk-..."
+  "OPENAI_API_KEY": "sk-...",
+  "ANTHROPIC_API_KEY": "sk-ant-...",
+  "GEMINI_API_KEY": "AIza..."
 }
 ```
 
@@ -43,7 +45,7 @@ export NVIDIA_API_KEY="nvapi-..."
 export GROQ_API_KEY="gsk_..."
 ```
 
-## 💻 Usage
+## ?? Usage
 
 Run the router from the CLI. The first argument is your model fallback chain, and the rest is your prompt.
 
@@ -63,7 +65,7 @@ python smart_router.py "nvidia:poolside/laguna-xs-2.1,groq:groq/compound" "Write
 python smart_router.py "nvidia:nvidia/nemotron-3-super-120b-a12b,nvidia:moonshotai/kimi-k3" "Solve this logic puzzle..."
 ```
 
-## 🏗️ Architecture Overview
+## ??? Architecture Overview
 
 The router uses a `FileLock`-backed JSON state (`circuit_breaker.json`) to track failures across concurrent runs. 
 If an endpoint times out or returns a 5xx error more than `MAX_FAILURES` times, the circuit trips and forces the router to skip that endpoint for the next 120 seconds, immediately trying the next fallback model.
