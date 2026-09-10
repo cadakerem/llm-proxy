@@ -4,8 +4,7 @@ A translation layer that converts Anthropic's `Messages API` format into standar
 
 This allows developers to seamlessly use **Antigravity** or **Claude Code** with alternative local or remote models (like OpenAI, Nvidia NIM, Groq, or Ollama) with full agentic capabilities.
 
-## Features
-
+## ⚡ Features
 - **Full SSE Streaming:** Real-time token-by-token output. Prevents timeouts and preserves the native CLI UI experience.
 - **Two-Way Tool Calling:** Translates Anthropic's JSON Schema tools into OpenAI functions, and maps OpenAI's `tool_calls` back to Anthropic `tool_use` blocks. (Agents can read files, run bash, etc.)
 - **Fallback Chains:** You can configure ordered fallback lists for resilience if a provider API fails.
@@ -45,8 +44,7 @@ cd llm-proxy
 pip install -r requirements.txt
 ```
 
-## Usage
-
+## 💻 Usage
 **Configure and Run:**
 ```bash
 # Rename the example env file and add your keys
@@ -56,8 +54,8 @@ mv .env.example .env
 python start.py
 ```
 
-## Contributing
+## 🤝 Contributing
 Contributions are welcome.
 
-## License
+## 📜 License
 [MIT License](LICENSE)
