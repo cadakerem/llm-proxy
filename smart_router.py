@@ -1,10 +1,17 @@
-import sys
+﻿import sys
 import os
 import json
 import time
 import random
 from openai import OpenAI
 from filelock import FileLock, Timeout
+
+# Optional import for anthropic
+try:
+    import anthropic
+    HAS_ANTHROPIC = True
+except ImportError:
+    HAS_ANTHROPIC = False
 
 # Paths and configuration
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,11 +38,15 @@ def get_api_key(provider):
 NVIDIA_API_KEY = get_api_key("NVIDIA")
 OPENAI_API_KEY = get_api_key("OPENAI")
 GROQ_API_KEY = get_api_key("GROQ")
+GEMINI_API_KEY = get_api_key("GEMINI")
+ANTHROPIC_API_KEY = get_api_key("ANTHROPIC")
 
 PROVIDERS = {
     "nvidia": {"base_url": "https://integrate.api.nvidia.com/v1", "api_key": NVIDIA_API_KEY},
     "openai": {"base_url": "https://api.openai.com/v1", "api_key": OPENAI_API_KEY},
-    "groq": {"base_url": "https://api.groq.com/openai/v1", "api_key": GROQ_API_KEY}
+    "groq": {"base_url": "https://api.groq.com/openai/v1", "api_key": GROQ_API_KEY},
+    "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "api_key": GEMINI_API_KEY},
+    "anthropic": {"api_key": ANTHROPIC_API_KEY} # anthropic uses its own SDK
 }
 
 def load_circuit():
@@ -75,8 +86,8 @@ def check_health(model_id):
             if model_id in circuit:
                 stats = circuit[model_id]
                 if stats.get('cooldown_until', 0) > time.time():
-                    return False # Circuit OPEN (Cooling down)
-            return True # Circuit CLOSED (Healthy)
+                    return False
+            return True
     except Timeout:
         print(f"[*] Timeout acquiring lock for {model_id} health check. Assuming healthy.")
         return True
@@ -92,7 +103,7 @@ def record_failure(model_id):
             
             if circuit[model_id]['failures'] >= MAX_FAILURES:
                 circuit[model_id]['cooldown_until'] = time.time() + COOLDOWN_SECONDS
-                circuit[model_id]['failures'] = 0 # reset after tripping
+                circuit[model_id]['failures'] = 0
                 print(f"[CIRCUIT BREAKER] {model_id} tripped! Cooling down for {COOLDOWN_SECONDS}s.")
                 
             save_circuit(circuit)
@@ -112,7 +123,7 @@ def record_success(model_id):
 def parse_model(model_string):
     if ":" in model_string:
         provider, model = model_string.split(":", 1)
-        return provider.strip(), model.strip()
+        return provider.strip().lower(), model.strip()
     return "nvidia", model_string.strip()
 
 def query_ai(models_list, prompt, max_retries=2, base_timeout=30):
@@ -123,7 +134,7 @@ def query_ai(models_list, prompt, max_retries=2, base_timeout=30):
         provider, current_model = parse_model(current_model_str)
         
         if not check_health(current_model_str):
-            print(f"[!] Health Check Failed: {current_model_str} is in cooldown. Skipping to next fallback...")
+            print(f"[!] Health Check Failed: {current_model_str} is in cooldown. Skipping...")
             continue
             
         provider_config = PROVIDERS.get(provider)
@@ -134,41 +145,61 @@ def query_ai(models_list, prompt, max_retries=2, base_timeout=30):
         is_nemotron = "nemotron" in current_model.lower()
         model_timeout = 90 if is_nemotron else base_timeout
             
-        client = OpenAI(
-            base_url=provider_config["base_url"],
-            api_key=provider_config["api_key"],
-            timeout=model_timeout
-        )
-        
-        extra_body = {}
-        if provider == "nvidia" and "nemotron" in current_model.lower():
-            extra_body = {"chat_template_kwargs": {"enable_thinking": True}}
-            
         for attempt in range(max_retries):
             try:
-                completion = client.chat.completions.create(
-                    model=current_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.7,
-                    max_tokens=4096,
-                    extra_body=extra_body if extra_body else None,
-                    stream=True
-                )
-                
                 full_reasoning = ""
                 full_content = ""
-                
-                for chunk in completion:
-                    if not chunk.choices:
-                        continue
-                    reasoning = getattr(chunk.choices[0].delta, "reasoning_content", None)
-                    if reasoning:
-                        full_reasoning += reasoning
+
+                # --- ANTHROPIC LOGIC ---
+                if provider == "anthropic":
+                    if not HAS_ANTHROPIC:
+                        raise ImportError("Anthropic package is missing. 'pip install anthropic' is required.")
                         
-                    content = chunk.choices[0].delta.content
-                    if content:
-                        full_content += content
+                    client = anthropic.Anthropic(
+                        api_key=provider_config["api_key"],
+                        timeout=model_timeout
+                    )
+                    with client.messages.stream(
+                        model=current_model,
+                        max_tokens=4096,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.7
+                    ) as stream:
+                        for text in stream.text_stream:
+                            full_content += text
+
+                # --- OPENAI / NVIDIA / GROQ / GEMINI LOGIC ---
+                else:
+                    client = OpenAI(
+                        base_url=provider_config["base_url"],
+                        api_key=provider_config["api_key"],
+                        timeout=model_timeout
+                    )
+                    
+                    extra_body = {}
+                    if provider == "nvidia" and "nemotron" in current_model.lower():
+                        extra_body = {"chat_template_kwargs": {"enable_thinking": True}}
                         
+                    completion = client.chat.completions.create(
+                        model=current_model,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.7,
+                        max_tokens=4096,
+                        extra_body=extra_body if extra_body else None,
+                        stream=True
+                    )
+                    
+                    for chunk in completion:
+                        if not chunk.choices:
+                            continue
+                        reasoning = getattr(chunk.choices[0].delta, "reasoning_content", None)
+                        if reasoning:
+                            full_reasoning += reasoning
+                            
+                        content = chunk.choices[0].delta.content
+                        if content:
+                            full_content += content
+                            
                 record_success(current_model_str)
                 
                 output = ""
