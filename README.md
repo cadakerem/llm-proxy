@@ -19,22 +19,22 @@ This allows developers to seamlessly use **Antigravity** or **Claude Code** with
 ## 🔒 Security Note (Network Binding)
 By default, the FastAPI server binds strictly to `127.0.0.1` (localhost). **Do not change this to `0.0.0.0`.** If you do, anyone on your local network (e.g., public WiFi, office LAN) can discover the proxy and route requests through your API keys.
 
-## 🤖 Antigravity SKILL Olarak Kurulum
+## 🤖 Installation as an Antigravity SKILL
 
-Bu projeyi Antigravity veya benzeri yapay zeka asistanlarında bir **SKILL (Yetenek)** olarak kullanmak isterseniz, repoyu doğrudan yetenek klasörünüze klonlayabilirsiniz.
+If you want to use this project as a **SKILL** in Antigravity or similar AI assistants, you can clone the repository directly into your skills directory.
 
-**Global (Tüm projelerde geçerli) kurulum:**
+**Global installation (applies to all projects):**
 ```bash
 git clone https://github.com/cadakerem/llm-proxy.git ~/.gemini/config/skills/llm-proxy
 ```
 
-**Sadece tek bir projeye özel kurulum:**
+**Project-specific installation:**
 ```bash
 mkdir -p .agents/skills
 git clone https://github.com/cadakerem/llm-proxy.git .agents/skills/llm-proxy
 ```
 
-## 📦 Standart Kurulum (Standalone)
+## 📦 Standard Installation (Standalone)
 
 ```bash
 # Clone the repository
