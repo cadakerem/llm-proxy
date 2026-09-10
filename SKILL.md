@@ -26,3 +26,7 @@ pip install -r requirements.txt
 python start.py
 ```
 This will start the FastAPI proxy and output the necessary environment variable (e.g., `ANTHROPIC_BASE_URL=http://127.0.0.1:8000`) that needs to be set for the agent to use it.
+
+
+## API Keys Configuration
+Before running the proxy, ensure the user has configured their API keys by copying .env.example to .env in the skill's root directory and filling in the desired providers.
