@@ -1,4 +1,4 @@
-﻿import os
+import os
 import time
 import pytest
 from smart_router import CircuitBreaker

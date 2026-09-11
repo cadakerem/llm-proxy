@@ -1,4 +1,4 @@
-﻿# Smart Router (CLI Delegation Tool)
+# Smart Router (CLI Delegation Tool)
 
 > A lightweight, fault-tolerant CLI tool for delegating LLM tasks to expert models across multiple providers (Nvidia NIM, Groq, OpenAI, Anthropic Claude, Gemini).
 
