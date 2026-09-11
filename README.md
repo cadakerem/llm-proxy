@@ -1,11 +1,12 @@
-# Smart Router (CLI Delegation Tool)
+﻿# Smart Router (CLI Delegation Tool)
 
 > A lightweight, fault-tolerant CLI tool for delegating LLM tasks to expert models across multiple providers (Nvidia NIM, Groq, OpenAI, Anthropic Claude, Gemini).
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
+![CI](https://github.com/cadakerem/smart-router/actions/workflows/ci.yml/badge.svg)
 
-## ⚡ Features
+## âš¡ Features
 
 - **Multi-Provider Support:** seamlessly route requests to `nvidia`, `groq`, `openai`, `anthropic`, or `gemini`.
 - **Automatic Fallbacks:** Provide a comma-separated list of models. If one fails, it instantly falls back to the next.
@@ -13,7 +14,7 @@
 - **Reasoning Extraction:** Automatically extracts and formats hidden `<thought>` or `reasoning` blocks (e.g., from Nemotron or DeepSeek).
 - **Streaming Native:** Built on the official OpenAI SDK for fast and reliable streaming chunks.
 
-## 📦 Installation
+## ğŸ“¦ Installation
 
 ```bash
 # Clone the repository
@@ -48,7 +49,7 @@ export NVIDIA_API_KEY="nvapi-..."
 export GROQ_API_KEY="gsk_..."
 ```
 
-## 💻 Usage
+## ğŸ’» Usage
 
 Run the router from the CLI. The first argument is your model fallback chain, and the rest is your prompt.
 
@@ -74,7 +75,7 @@ python smart_router.py -m "nvidia:poolside/laguna-xs-2.1,groq:groq/compound" -p 
 python smart_router.py -m "groq:llama3" -p "Hello" --project "agent-core" --max-failures 3 --cooldown 300
 ```
 
-## 🏗️ Architecture Overview
+## ğŸ—ï¸ Architecture Overview
 
 The router uses a `FileLock`-backed JSON state (`circuit_breaker.json`) to track failures across concurrent runs. 
 If an endpoint times out or returns a 5xx error more than `MAX_FAILURES` times, the circuit trips and forces the router to skip that endpoint for the next 120 seconds, immediately trying the next fallback model.

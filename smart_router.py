@@ -1,11 +1,14 @@
-import sys
+﻿import sys
 import os
 import json
 import time
 import random
 import argparse
+import logging
 from openai import OpenAI
 from filelock import FileLock, Timeout
+
+__version__ = "0.1.0"
 
 # Optional import for anthropic
 try:
@@ -13,6 +16,14 @@ try:
     HAS_ANTHROPIC = True
 except ImportError:
     HAS_ANTHROPIC = False
+
+# Setup Logging
+logger = logging.getLogger("smart_router")
+handler = logging.StreamHandler(sys.stderr)
+formatter = logging.Formatter("[%(levelname)s] %(message)s")
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -42,7 +53,6 @@ class CircuitBreaker:
         self.max_failures = max_failures
         self.cooldown_seconds = cooldown_seconds
         
-        # Safe filename
         safe_proj = "".join([c if c.isalnum() else "_" for c in project_id])
         self.circuit_file = os.path.join(SCRIPT_DIR, f"circuit_breaker_{safe_proj}.json")
         self.lock_file = os.path.join(SCRIPT_DIR, f"circuit_breaker_{safe_proj}.json.lock")
@@ -85,6 +95,7 @@ class CircuitBreaker:
                         return False
                 return True
         except Timeout:
+            logger.debug(f"Timeout acquiring lock for {model_id} health check. Assuming healthy.")
             return True
             
     def record_failure(self, model_id):
@@ -99,10 +110,10 @@ class CircuitBreaker:
                 if circuit[model_id]['failures'] >= self.max_failures:
                     circuit[model_id]['cooldown_until'] = time.time() + self.cooldown_seconds
                     circuit[model_id]['failures'] = 0
-                    print(f"[CIRCUIT BREAKER] {model_id} tripped! Cooldown: {self.cooldown_seconds}s.")
+                    logger.warning(f"CIRCUIT BREAKER: {model_id} tripped! Cooldown: {self.cooldown_seconds}s.")
                 self.save(circuit)
         except Timeout:
-            pass
+            logger.debug(f"Timeout acquiring lock. Could not record failure for {model_id}.")
             
     def record_success(self, model_id):
         try:
@@ -128,12 +139,12 @@ def query_ai(models_list, prompt, cb: CircuitBreaker, max_retries=2, base_timeou
         provider, current_model = parse_model(current_model_str)
         
         if not cb.check_health(current_model_str):
-            print(f"[!] Health Check Failed: {current_model_str} is in cooldown. Skipping...")
+            logger.info(f"Health Check Failed: {current_model_str} is in cooldown. Skipping...")
             continue
             
         provider_config = PROVIDERS.get(provider)
         if not provider_config or not provider_config.get("api_key"):
-            print(f"[!] Provider '{provider}' not configured or missing API key. Skipping...")
+            logger.error(f"Provider '{provider}' not configured or missing API key. Skipping...")
             continue
             
         is_nemotron = "nemotron" in current_model.lower()
@@ -172,26 +183,24 @@ def query_ai(models_list, prompt, cb: CircuitBreaker, max_retries=2, base_timeou
                             
                 cb.record_success(current_model_str)
                 output = ""
-                if full_reasoning: output += f"--- REASONING ({current_model_str}) ---
-{full_reasoning}
---- END REASONING ---
-
-"
+                if full_reasoning: output += f"--- REASONING ({current_model_str}) ---\n{full_reasoning}\n--- END REASONING ---\n\n"
                 output += full_content
                 return output
                 
             except Exception as e:
                 error_msg = str(e).lower()
-                print(f"[*] Attempt {attempt+1} failed for {current_model_str}: {str(e)}", file=sys.stderr)
+                logger.error(f"Attempt {attempt+1} failed for {current_model_str}: {str(e)}")
                 cb.record_failure(current_model_str)
                 if "404" in error_msg or "not found" in error_msg or "auth" in error_msg: break 
                 if attempt == max_retries - 1: break 
                 time.sleep((2 ** attempt) + random.uniform(0.1, 1.5))
                 
-    return "[ERROR] All fallback models failed, timed out, or are in cooldown."
+    logger.error("All fallback models failed, timed out, or are in cooldown.")
+    sys.exit(1)
 
 def main():
     parser = argparse.ArgumentParser(description="Smart Router: A fault-tolerant CLI tool for LLM delegation.")
+    parser.add_argument("-v", "--version", action="version", version=f"Smart Router v{__version__}")
     parser.add_argument("-m", "--models", required=True, help="Comma-separated list of provider:model fallbacks (e.g. nvidia:nemotron,groq:llama3).")
     parser.add_argument("-p", "--prompt", help="The prompt text to send to the model.")
     parser.add_argument("-f", "--file", help="Path to a text file containing the prompt.")
@@ -209,7 +218,7 @@ def main():
             with open(args.file, "r", encoding="utf-8") as f:
                 prompt_text = f.read()
         except Exception as e:
-            print(f"[!] Error reading file: {e}", file=sys.stderr)
+            logger.error(f"Error reading file: {e}")
             sys.exit(1)
     elif not sys.stdin.isatty():
         prompt_text = sys.stdin.read()
@@ -217,11 +226,13 @@ def main():
         parser.error("You must provide a prompt via -p, -f, or stdin (piped input).")
         
     if not prompt_text.strip():
-        print("[!] Prompt cannot be empty.", file=sys.stderr)
+        logger.error("Prompt cannot be empty.")
         sys.exit(1)
         
     cb = CircuitBreaker(args.project, args.max_failures, args.cooldown)
     response = query_ai(args.models, prompt_text, cb)
+    
+    # Print the final LLM response to stdout so it can be piped properly
     print(response)
 
 if __name__ == "__main__":
