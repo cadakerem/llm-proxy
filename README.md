@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![CI](https://github.com/cadakerem/smart-router/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/cadakerem/agent-smart-router/actions/workflows/ci.yml/badge.svg)
 
 ## ⚡ Features
 
@@ -18,11 +18,11 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/cadakerem/smart-router.git
+git clone https://github.com/cadakerem/agent-smart-router.git
 cd smart-router
 
 # Install dependencies
-pip install -r requirements.txt
+pip install agent-smart-router
 ```
 
 ### Setup API Keys
@@ -77,3 +77,5 @@ python smart_router.py -m "groq:llama3" -p "Hello" --project "agent-core" --max-
 
 The router uses a `FileLock`-backed JSON state (`circuit_breaker.json`) to track failures across concurrent runs. 
 If an endpoint times out or returns a 5xx error more than `MAX_FAILURES` times, the circuit trips and forces the router to skip that endpoint for the next 120 seconds, immediately trying the next fallback model.
+
+
