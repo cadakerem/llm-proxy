@@ -31,4 +31,5 @@ jobs:
         
     - name: Smoke Test CLI
       run: |
-        smart-router --help
+        agent-smart-router --help
+

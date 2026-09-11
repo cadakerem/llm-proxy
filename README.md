@@ -52,30 +52,31 @@ export GROQ_API_KEY="gsk_..."
 ## 💻 Usage
 
 ```bash
-python smart_router.py -m "<provider:model1>,<provider:model2>" -p "<your prompt>"
+python agent_smart_router.py -m "<provider:model1>,<provider:model2>" -p "<your prompt>"
 ```
 
 You can also read prompts from a file or via standard input:
 ```bash
-python smart_router.py -m "nvidia:nemotron,groq:llama3" -f prompt.txt
-cat logs.txt | python smart_router.py -m "groq:llama3"
+python agent_smart_router.py -m "nvidia:nemotron,groq:llama3" -f prompt.txt
+cat logs.txt | python agent_smart_router.py -m "groq:llama3"
 ```
 
 ### Examples
 
 **Heavy Coding Task (Nvidia Laguna -> Groq Fallback):**
 ```bash
-python smart_router.py -m "nvidia:poolside/laguna-xs-2.1,groq:groq/compound" -p "Write a python script to parse logs."
+python agent_smart_router.py -m "nvidia:poolside/laguna-xs-2.1,groq:groq/compound" -p "Write a python script to parse logs."
 ```
 
 **Custom Cooldown and Project ID:**
 ```bash
-python smart_router.py -m "groq:llama3" -p "Hello" --project "agent-core" --max-failures 3 --cooldown 300
+python agent_smart_router.py -m "groq:llama3" -p "Hello" --project "agent-core" --max-failures 3 --cooldown 300
 ```
 
 ## 🏗️ Architecture Overview
 
 The router uses a `FileLock`-backed JSON state (`circuit_breaker.json`) to track failures across concurrent runs. 
 If an endpoint times out or returns a 5xx error more than `MAX_FAILURES` times, the circuit trips and forces the router to skip that endpoint for the next 120 seconds, immediately trying the next fallback model.
+
 
 

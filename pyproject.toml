@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "smart-router"
+name = "agent-smart-router"
 version = "0.1.0"
 authors = [
   { name="Kerem Barbaros Karnabat", email="kbarbaros@hotmail.com" }
@@ -23,4 +23,5 @@ dependencies = [
 ]
 
 [project.scripts]
-smart-router = "smart_router:main"
+agent-smart-router = "agent_smart_router:main"
+
