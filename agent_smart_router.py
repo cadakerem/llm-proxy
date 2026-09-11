@@ -8,7 +8,7 @@ import logging
 from openai import OpenAI
 from filelock import FileLock, Timeout
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Optional import for anthropic
 try:
