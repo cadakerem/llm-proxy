@@ -85,3 +85,4 @@ agent-smart-router -m "groq:llama3" -p "Hello" --project "agent-core" --max-fail
 
 The router uses a `FileLock`-backed JSON state (`circuit_breaker.json`) to track failures across concurrent runs. 
 If an endpoint times out or returns a 5xx error more than `MAX_FAILURES` times, the circuit trips and forces the router to skip that endpoint for the next 120 seconds, immediately trying the next fallback model.
+
